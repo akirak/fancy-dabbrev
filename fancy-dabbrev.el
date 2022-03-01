@@ -205,6 +205,12 @@ The value is in seconds."
   :type 'float
   :group 'fancy-dabbrev)
 
+(defcustom fancy-dabbrev-expansion-key "TAB"
+  "Key used to trigger expansion."
+  :type '(choice (const nil)
+                 string)
+  :group 'fancy-dabbrev)
+
 (defcustom fancy-dabbrev-expansion-context
   'after-symbol
   "Where to try to perform expansion.
@@ -287,6 +293,8 @@ represent major or minor modes."
 
 (defvar fancy-dabbrev-mode nil)
 
+(defvar fancy-dabbrev-mode-map (make-sparse-keymap))
+
 (defvar fancy-dabbrev--popup nil
   "The state of the popup menu.")
 
@@ -307,6 +315,9 @@ represent major or minor modes."
 
 (defvar fancy-dabbrev--preview-timer nil
   "The state of the preview timer.")
+
+(defvar fancy-dabbrev-fallback-command nil
+  "Command which was originally bound on the expansion key in the buffer.")
 
 (defface fancy-dabbrev-menu-face
   '((t (:inherit popup-face)))
@@ -340,6 +351,18 @@ after an expandable prefix, otherwise `indent-for-tab-command'."
   (interactive)
   (unless (fancy-dabbrev--expand)
     (call-interactively fancy-dabbrev-indent-command)))
+
+;;;###autoload
+(defun fancy-dabbrev-expand-humbly ()
+  "Expand previous word in the least surprising way.
+
+This function try expansion only after one of the
+`fancy-dabbrev-self-insert-commands' is run. Otherwise, or if no
+expansion is possible, the fallback command is run."
+  (interactive)
+  (unless (and (memq last-command fancy-dabbrev-self-insert-commands)
+               (fancy-dabbrev--expand))
+    (call-interactively fancy-dabbrev-fallback-command)))
 
 ;;;###autoload
 (defun fancy-dabbrev-backward ()
@@ -614,6 +637,21 @@ That is, if `this-command' is not one of
   (when (fancy-dabbrev--is-fancy-dabbrev-command last-command)
     (fancy-dabbrev--insert-expansion fancy-dabbrev--entered-abbrev)))
 
+(defun fancy-dabbrev--discover-command ()
+  "[internal] Set `fancy-dabbrev-fallback-command' according to the key."
+  (when fancy-dabbrev-expansion-key
+    (setq-local fancy-dabbrev-fallback-command (fancy-dabbrev--fallback-command))))
+
+(defun fancy-dabbrev--fallback-command ()
+  "[internal] Return the original command in the buffer."
+  (or (catch 'result
+        (pcase-dolist (`(,mode . ,map) minor-mode-map-alist)
+          (when (and mode (not (eq mode 'fancy-dabbrev-mode)))
+            (when-let (cmd (keymap-lookup map fancy-dabbrev-expansion-key))
+              (throw 'result cmd)))))
+      (when-let (cmd (keymap-lookup (current-global-map) fancy-dabbrev-expansion-key))
+        cmd)))
+
 ;;;###autoload
 (define-minor-mode fancy-dabbrev-mode
   "Toggle `fancy-dabbrev-mode'.
@@ -629,7 +667,8 @@ functionality is activated."
   (if fancy-dabbrev-mode
       (progn
         (add-hook 'pre-command-hook #'fancy-dabbrev--pre-command-hook nil t)
-        (add-hook 'post-command-hook #'fancy-dabbrev--post-command-hook nil t))
+        (add-hook 'post-command-hook #'fancy-dabbrev--post-command-hook nil t)
+        (fancy-dabbrev--discover-command))
     (remove-hook 'pre-command-hook #'fancy-dabbrev--pre-command-hook t)
     (remove-hook 'post-command-hook #'fancy-dabbrev--post-command-hook t)
 
